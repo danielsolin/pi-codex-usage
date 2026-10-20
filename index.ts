@@ -336,7 +336,7 @@ export default function (pi: ExtensionAPI) {
   let _tui: any = null;
   let latestCtx: any = null;              // 最近一次事件拿到的 ctx,供定时器使用
   let thinkingLevel = "off";
-  const IDLE_REFRESH_MS = 5 * 60 * 1000;  // 闲时定时刷新: 5 分钟
+  const IDLE_REFRESH_MS = 30 * 60 * 1000;  // 闲时定时刷新: 30 分钟
   let agentBusy = false;                  // agent 生成中 = true,定时刷新只在闲时执行
   let idleTimer: ReturnType<typeof setInterval> | null = null;
   let fastTierStatus: FastTierStatus | undefined;
@@ -583,12 +583,18 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
+  let lastMidRefreshAt = 0;
   pi.on("message_end", async (event: any, ctx: any) => {
     if (event.message?.role !== "assistant") return;
     finishOutputTiming(event.message);
     // Assistant messages ending in tool calls are separate provider interactions
-    // too. Check for an update here; getUsage keeps requests within its 60s cache.
-    if (tokenSrc) await refresh(ctx);
+    // too. Check for an update here so a long single turn still tracks usage;
+    // at most one attempt (including a failed one) per CACHE_MS window.
+    if (!tokenSrc) return;
+    const now = Date.now();
+    if (now - lastMidRefreshAt < CACHE_MS) return;
+    lastMidRefreshAt = now;
+    await refresh(ctx);
   });
 
   // A tool's server/processing time belongs to the next response's TTFT, not
@@ -597,7 +603,7 @@ export default function (pi: ExtensionAPI) {
     if (pendingToolWaitStartedAt === null) pendingToolWaitStartedAt = performance.now();
   });
 
-  // ── Idle timer (每 5 分钟闲时刷新) ───────────────────────
+  // ── Idle timer (每 30 分钟闲时刷新) ───────────────────────
   function startIdleTimer() {
     stopIdleTimer();
     idleTimer = setInterval(() => {
