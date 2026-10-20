@@ -2,7 +2,7 @@
 
 Pi Coding Agent extension for monitoring your [OpenAI Codex / ChatGPT subscription](https://developers.openai.com/codex) usage.
 
-Shows the 5-hour rate-limit window and weekly quota in the pi footer bar. For supported OpenAI/Codex models, each assistant message end—including tool-call messages—checks for updated usage. All triggers share a 60-second cache, so usage is fetched at most once per minute.
+Shows the 5-hour rate-limit window and weekly quota in the pi footer bar. For supported OpenAI/Codex models, each assistant message end—including tool-call messages—checks for updated usage. The footer also refreshes every five minutes while the agent is idle. All triggers share a 60-second cache, so usage is fetched at most once per minute.
 
 ## Install
 

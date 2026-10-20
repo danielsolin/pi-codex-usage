@@ -334,8 +334,11 @@ export default function (pi: ExtensionAPI) {
   let footerOn = false;
   let footerGeneration = 0;
   let _tui: any = null;
-  let latestCtx: any = null;
+  let latestCtx: any = null;              // 最近一次事件拿到的 ctx,供定时器使用
   let thinkingLevel = "off";
+  const IDLE_REFRESH_MS = 5 * 60 * 1000;  // 闲时定时刷新: 5 分钟
+  let agentBusy = false;                  // agent 生成中 = true,定时刷新只在闲时执行
+  let idleTimer: ReturnType<typeof setInterval> | null = null;
   let fastTierStatus: FastTierStatus | undefined;
   let outputTiming: OutputTiming | null = null;
   let pendingToolWaitStartedAt: number | null = null;
@@ -594,17 +597,35 @@ export default function (pi: ExtensionAPI) {
     if (pendingToolWaitStartedAt === null) pendingToolWaitStartedAt = performance.now();
   });
 
+  // ── Idle timer (每 5 分钟闲时刷新) ───────────────────────
+  function startIdleTimer() {
+    stopIdleTimer();
+    idleTimer = setInterval(() => {
+      if (agentBusy) return;                    // 生成中,跳过本轮 (生成中由 message_end 刷新)
+      const ctx = latestCtx;
+      if (!ctx || !tokenSrc || !isCodex(ctx)) return;  // 只在 codex 模型下刷新
+      refresh(ctx);
+    }, IDLE_REFRESH_MS);
+    (idleTimer as any).unref?.();               // 不阻止进程退出
+  }
+
+  function stopIdleTimer() {
+    if (idleTimer) { clearInterval(idleTimer); idleTimer = null; }
+  }
+
   pi.on("session_start", async (_e, ctx) => {
     latestCtx = ctx;
     forceCodexContextWindows(ctx);
     tokenSrc = readTokenSource();
     thinkingLevel = pi.getThinkingLevel?.() || "off";
-    footerOn = false;
+    footerOn = false;                            // 强制重建 footer,确保闭包捕获新 ctx
     toggleFooter(ctx, true);
     if (tokenSrc) refresh(ctx);
+    startIdleTimer();
   });
 
   pi.on("session_shutdown", async () => {
+    stopIdleTimer();
     outputTiming = null;
     pendingToolWaitStartedAt = null;
     latestCtx = null;
@@ -634,11 +655,14 @@ export default function (pi: ExtensionAPI) {
   pi.on("thinking_level_select", async (event: any) => { thinkingLevel = event.level || "off"; trigger(); });
   pi.on("agent_start", async (_e, ctx) => {
     latestCtx = ctx;
+    agentBusy = true;
     // Re-apply after any late model-catalog refresh.
     forceCodexContextWindows(ctx);
   });
   pi.on("agent_end", async (event: any, ctx) => {
     latestCtx = ctx;
+    agentBusy = false;
+    if (tokenSrc) refresh(ctx);
     if (outputTiming) {
       const lastAssistant = [...(event.messages ?? [])].reverse().find((message: any) => message.role === "assistant");
       finishOutputTiming(lastAssistant);
